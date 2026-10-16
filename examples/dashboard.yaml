@@ -1,7 +1,7 @@
 # Dashboard view (panel) for ADB Control: paste into a dashboard's raw configuration editor as a view.
 # Replace 192.168.1.10 with the container host. The viewer is plain http, so it only loads when Home Assistant
 # itself is opened over http on the LAN (an https Home Assistant page blocks http frames).
-# A panel view keeps this layout at any screen width: the top row, one card per device, then the screens.
+# A panel view keeps this layout at any screen width: one card per device, then the screens.
 # For remote access use the https address instead (see the README), e.g. https://adbcontrol.example.com/view?key=<key>
 title: ADB
 path: adb
