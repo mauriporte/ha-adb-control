@@ -27,3 +27,19 @@ def test_viewer_page_javascript_parses(tmp_path):
     f = tmp_path / "view.js"
     f.write_text(js, encoding="utf8")
     assert subprocess.run(["node", "--check", str(f)]).returncode == 0
+
+
+def test_stream_mode_keeps_devices_with_video_on(monkeypatch):
+    import io
+    import json
+
+    reply = {"on": True, "streams": {"192.168.1.21": {"src": "phone_a", "video": True},
+                                     "192.168.1.22": {"src": "tablet", "video": False}}}
+    monkeypatch.setattr(control, "STREAM_URL", "http://stream:8005")
+    monkeypatch.setattr(control.urllib.request, "urlopen", lambda req, timeout: io.BytesIO(json.dumps(reply).encode()))
+    devices = [{"ip": "192.168.1.21"}, {"ip": "192.168.1.22"}, {"ip": "192.168.1.23"}]
+    assert control.with_streams(devices) == [{"ip": "192.168.1.21", "player": "http://stream:8005/play?src=phone_a"}]
+    reply["on"] = False  # Stream Control off: nothing to show
+    assert control.with_streams(devices) == []
+    monkeypatch.setattr(control, "STREAM_URL", "")  # stream mode not configured
+    assert control.with_streams(devices) == []

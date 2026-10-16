@@ -1,69 +1,64 @@
-# Dashboard view (sections) for ADB Control: paste into a dashboard's raw configuration editor as a view.
+# Dashboard view (panel) for ADB Control: paste into a dashboard's raw configuration editor as a view.
 # Replace 192.168.1.10 with the container host. The viewer is plain http, so it only loads when Home Assistant
 # itself is opened over http on the LAN (an https Home Assistant page blocks http frames).
+# A panel view keeps this layout at any screen width: the top row, one card per device, then the screens.
 title: ADB
 path: adb
 icon: mdi:cellphone
-type: sections
-max_columns: 4
-sections:
-  - type: grid
-    column_span: 4
+type: panel
+cards:
+  - type: vertical-stack
     cards:
       - type: heading
         heading: ADB Control
         icon: mdi:cellphone-link
-      - type: tile
-        entity: script.adb_buscar
-        name: Buscar dispositivos
-        icon: mdi:magnify-scan
-        tap_action:
-          action: perform-action
-          perform_action: script.adb_buscar
-        grid_options: { columns: 4 }
-      - type: tile
-        entity: input_select.adb_dispositivo
-        name: Dispositivo
-        features:
-          - type: select-options
-        grid_options: { columns: 4 }
-      - type: tile
-        entity: switch.adb_control
-        name: ADB Control
-        features:
-          - type: toggle
-        tap_action: { action: toggle }
-        grid_options: { columns: 4 }
-      # per device: shown only while it is connected (repeat for each device)
-      - type: conditional
-        conditions:
-          - condition: state
-            entity: binary_sensor.adb_phone_a_conectado
-            state: "on"
-        card:
-          type: tile
-          entity: switch.phone_a_horizontal
-          name: Phone A horizontal
-          icon: mdi:phone-rotate-landscape
-          features:
-            - type: toggle
-          tap_action: { action: toggle }
-        grid_options: { columns: 4 }
-      - type: conditional
-        conditions:
-          - condition: state
-            entity: binary_sensor.adb_phone_a_conectado
-            state: "on"
-        card:
-          type: tile
-          entity: switch.pantalla_phone_a
-          name: Phone A
-          icon: mdi:monitor-cellphone
-          features:
-            - type: toggle
-          tap_action: { action: toggle }
-        grid_options: { columns: 3 }
+      # top row: search (1/4), the main switch (1/4), the device picker (1/2)
+      - type: horizontal-stack
+        cards:
+          - type: horizontal-stack
+            cards:
+              - type: tile
+                entity: script.adb_buscar
+                name: Buscar dispositivos
+                icon: mdi:magnify-scan
+                tap_action:
+                  action: perform-action
+                  perform_action: script.adb_buscar
+              - type: tile
+                entity: switch.adb_control
+                name: ADB Control
+                icon: mdi:cellphone-link
+                features:
+                  - type: toggle
+                tap_action: { action: toggle }
+          - type: tile
+            entity: input_select.adb_dispositivo
+            name: Dispositivo
+            features:
+              - type: select-options
+      # one card per device, shown only while it is connected (repeat for each device)
+      - type: grid
+        columns: 4
+        square: false
+        cards:
+          - type: conditional
+            conditions:
+              - condition: state
+                entity: binary_sensor.adb_phone_a_conectado
+                state: "on"
+            card:
+              type: entities
+              title: Phone A
+              icon: mdi:cellphone
+              show_header_toggle: false
+              state_color: true
+              entities:
+                - entity: switch.pantalla_phone_a
+                  name: Pantalla
+                  icon: mdi:monitor-cellphone
+                - entity: switch.phone_a_horizontal
+                  name: Horizontal
+                  icon: mdi:phone-rotate-landscape
       - type: iframe
         url: http://192.168.1.10:8002/view
-        aspect_ratio: 60%
-        grid_options: { columns: full, rows: 18 }
+        aspect_ratio: 110%

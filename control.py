@@ -8,6 +8,7 @@
 #                                 (how HA shows the screen only; the device itself is not rotated)
 #   GET  /display?ip=...       -> {"is_on": <screen shown in the viewer>}   POST /display {"ip", "show"} -> set it
 #                                 (hidden screens stay connected; they are only left out of the viewer)
+#   GET  /view?mode=stream     -> the same page with the audio+video streams instead (needs ADB_STREAM_URL)
 #   GET  /view                 -> page with the screens of all connected devices side by side (no token: LAN only,
 #                                 and ws-scrcpy itself on :8001 has no authentication either)
 # Every other request needs the X-Token header (env ADB_CONTROL_TOKEN).
@@ -16,6 +17,7 @@ import os
 import re
 import socket
 import subprocess
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
@@ -23,6 +25,9 @@ TOKEN = os.environ["ADB_CONTROL_TOKEN"]
 SUBNET = os.environ.get("ADB_SCAN_SUBNET", "192.168.1.0/24")
 PORT = int(os.environ.get("ADB_CONTROL_PORT", "8002"))
 SCRCPY_PORT = int(os.environ.get("WS_SCRCPY_PORT", "8001"))
+# optional audio+video streams (Stream Control, https://github.com/mauriporte/ha-stream-control): /view?mode=stream shows them with this same layout
+STREAM_FILE = "/root/.android/stream_url"  # or the env var; e.g. http://192.168.1.20:8005
+STREAM_URL = os.environ.get("ADB_STREAM_URL") or (open(STREAM_FILE).read().strip() if os.path.exists(STREAM_FILE) else "")
 IP_RE = re.compile(r"^\d{1,3}(\.\d{1,3}){3}$")
 SIZE_RE = re.compile(r"(\d+)x(\d+)")
 # Every screen is shown VIEW_HEIGHT px high: the minimum that fits ws-scrcpy's button column without scrollbars.
@@ -122,6 +127,23 @@ def scan() -> list[str]:
     return sorted(found, key=lambda x: tuple(int(p) for p in x.split(" ")[0].split(".")))
 
 
+def with_streams(devices: list[dict]) -> list[dict]:
+    """Keep the devices that have a stream to show, each with the URL of its player (served by adb-stream)."""
+    if not STREAM_URL:
+        return []
+    try:
+        req = urllib.request.Request(f"{STREAM_URL}/streams", headers={"X-Token": TOKEN})
+        with urllib.request.urlopen(req, timeout=5) as r:
+            data = json.load(r)
+    except (OSError, ValueError):
+        return []
+    if not data.get("on"):
+        return []
+    streams = data.get("streams", {})
+    return [{**d, "player": f"{STREAM_URL}/play?src={streams[d['ip']]['src']}"}
+            for d in devices if streams.get(d["ip"], {}).get("video")]
+
+
 def ip_of(value) -> str:
     ip = str(value or "").split(" ")[0]
     return ip if IP_RE.match(ip) else ""
@@ -143,7 +165,7 @@ VIEW = """<!doctype html><html><head><meta charset="utf-8"><meta name="viewport"
 iframe{border:0;background:#000;border-radius:10px}.empty{padding:40px;color:#888;text-align:center}
 </style></head><body><div id="wrap"><div id="rows"><div class="empty">Cargando…</div></div></div><script>
 const VH=__VIEW_HEIGHT__,  // kept for the page template; sizes below use MINH
-  H=location.hostname, SP=__SCRCPY_PORT__;
+  H=location.hostname, SP=__SCRCPY_PORT__, STREAM=new URLSearchParams(location.search).get("mode")==="stream";
 let shown="";
 function link(udid){const ws=`ws://${H}:${SP}/?action=proxy-adb&remote=tcp%3A8886&udid=${encodeURIComponent(udid)}`;
  return `http://${H}:${SP}/#!`+new URLSearchParams({action:"stream",udid,player:"mse",ws,fitToScreen:"true"}).toString();}
@@ -152,7 +174,7 @@ function fit(){  // scale everything down (never up) so every screen fits the ca
  const s=Math.min(1, innerWidth/rows.scrollWidth, innerHeight/rows.scrollHeight);
  rows.style.transform=`scale(${s})`;}
 const GAP=16;  // minimum space between screens (.row gap)
-const FRAME=60;  // iframe width = video width + FRAME (ws-scrcpy's 59.44 px button column, rounded up)
+const FRAME=STREAM?0:60;  // iframe width = video width + FRAME (ws-scrcpy's 59.44 px button column, rounded up)
 const MINH=416;  // minimum video height: fits ws-scrcpy's button column without scrollbars
 // ws-scrcpy sizes the video to its frame rounded DOWN to multiples of 16 px (minus the button column), so every
 // video box here is a multiple of 16 in both directions: then the picture fills the frame with no black margins.
@@ -167,12 +189,12 @@ const rowWidth=bs=>bs.reduce((s,b)=>s+b.vw+FRAME,0)+GAP*(bs.length-1);
 function screen(b){
  const box=document.createElement("div");box.className="phone";
  const t=document.createElement("b");t.textContent=(b.d.name||b.d.model||"Android")+" · "+b.d.ip;
- const f=document.createElement("iframe");f.src=link(b.d.ip+":5555");
+ const f=document.createElement("iframe");f.src=STREAM ? b.d.player : link(b.d.ip+":5555");
  const W=b.vw+FRAME, Hh=b.vh;
  // ws-scrcpy keeps the video size a shared stream started with and only refits on a resize; so start 2 px smaller
  // and grow to the final size once the stream is up, which makes it re-apply the bounds of this frame.
  f.width=W-2;f.height=Hh-2;f.allow="autoplay; fullscreen";
- f.addEventListener("load",()=>setTimeout(()=>{f.width=W;f.height=Hh;},4000));
+ f.addEventListener("load",()=>setTimeout(()=>{f.width=W;f.height=Hh;},STREAM?0:4000));
  box.append(t,f);return box;}
 function render(rows,list){
  // Columns: the first row is the reference (height MINH). In the rows below, each screen takes the width of the screen
@@ -200,12 +222,12 @@ function render(rows,list){
   bs.forEach(b=>row.append(screen(b)));
   rows.append(row);});}
 async function refresh(){try{
- const data=await (await fetch("/viewdata")).json();
+ const data=await (await fetch("/viewdata"+location.search)).json();
  const devs=data.devices.filter(d=>d.state==="device" && d.shown);  // hidden screens stay connected, just not shown
  const key=JSON.stringify(data.layout)+devs.map(d=>d.ip+(d.landscape?"L":"P")).join(",");
  if(key===shown)return; shown=key;  // only rebuild when the devices or their orientation change, so streams are not restarted
  const rows=document.getElementById("rows"); rows.replaceChildren();
- if(!devs.length){const e=document.createElement("div");e.className="empty";e.textContent="Ningún dispositivo conectado. Elige uno en «Dispositivo» y enciende ADB Control.";rows.append(e);fit();return;}
+ if(!devs.length){const e=document.createElement("div");e.className="empty";e.textContent=STREAM ? "Stream apagado o ningún vídeo encendido." : "Ningún dispositivo conectado. Elige uno en «Dispositivo» y enciende ADB Control.";rows.append(e);fit();return;}
  // Preferred order = layout.json read row by row (devices not in it go last). Each row pairs the next portrait screen
  // (left) with the next landscape one, so a missing device lets the next of its kind move up and every row gets a
  // landscape screen while there are any. Leftovers of one kind fill further rows two at a time.
@@ -241,12 +263,15 @@ class Handler(BaseHTTPRequestHandler):
         return True
 
     def do_GET(self):
-        if self.path == "/view":
+        if urlparse(self.path).path == "/view":
             page = VIEW.replace("__VIEW_HEIGHT__", str(VIEW_HEIGHT)).replace("__SCRCPY_PORT__", str(SCRCPY_PORT))
             return self._reply(200, page, "text/html; charset=utf-8")
-        if self.path == "/viewdata":  # only what the page needs: ip, state, model, aspect, landscape; plus the row layout
+        if urlparse(self.path).path == "/viewdata":  # what the page needs: ip, state, model, aspect, landscape; the row layout
             layout = json.load(open(LAYOUT_FILE)) if os.path.exists(LAYOUT_FILE) else []
-            return self._reply(200, {"devices": connected(), "layout": layout})
+            devices = connected()
+            if "mode=stream" in self.path:  # only devices with a stream whose Video switch is on, while Stream is on
+                devices = with_streams(devices)
+            return self._reply(200, {"devices": devices, "layout": layout})
         if not self._ok():
             return
         if self.path.startswith("/display"):

@@ -4,7 +4,8 @@ See and control the screens of several Android devices from a Home Assistant das
 It is a free alternative to tools like Vysor, built on [ws-scrcpy](https://github.com/NetrisTV/ws-scrcpy) (scrcpy in
 the browser) plus a small control service that Home Assistant talks to.
 
-Video and touch only (no audio). It is meant for your own devices on your home network.
+Video and touch only (no audio). It is meant for your own devices on your home network. For audio, see the companion
+project [Stream Control](https://github.com/mauriporte/ha-stream-control), which can share this viewer's layout.
 
 ## What you get
 
@@ -19,6 +20,7 @@ Video and touch only (no audio). It is meant for your own devices on your home n
   - **horizontal:** a landscape frame for apps that run in landscape (the device itself is not rotated);
   - **show/hide:** the device stays connected but leaves the viewer.
 - Touch, keys (back, home, recents, power, volume) and keyboard through ws-scrcpy's own buttons.
+- Dashboard: a panel view with the main controls on top, one card per device with its switches, then the screens.
 
 ## How it works
 
@@ -75,6 +77,7 @@ ADB over Wi-Fi on port 5555 has to be enabled once per boot.
 | `layout.json` | preferred order of devices, row by row | `[["192.168.1.21", "192.168.1.22"], ["192.168.1.23"]]` |
 | `names.json` | names shown by the scan instead of network hostnames | `{"192.168.1.22": "Kitchen tablet"}` |
 | `orientation.json`, `hidden.json`, `selected` | written by the switches | — |
+| `stream_url` | address of [Stream Control](https://github.com/mauriporte/ha-stream-control), for `/view?mode=stream` (or env `ADB_STREAM_URL`) | `http://192.168.1.20:8005` |
 
 ## API
 
@@ -87,6 +90,7 @@ ADB over Wi-Fi on port 5555 has to be enabled once per boot.
 | `GET/POST /orientation` | landscape frame per device |
 | `GET/POST /display` | show / hide per device |
 | `GET /view`, `GET /viewdata` | the viewer page and its data (no token) |
+| `GET /view?mode=stream` | the same viewer and layout with Stream Control's audio+video players (needs `stream_url`) |
 
 ## Limits
 
