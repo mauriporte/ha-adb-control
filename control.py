@@ -17,6 +17,7 @@ import os
 import re
 import socket
 import subprocess
+import threading
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
@@ -28,6 +29,11 @@ SCRCPY_PORT = int(os.environ.get("WS_SCRCPY_PORT", "8001"))
 # optional audio+video streams (Stream Control, https://github.com/mauriporte/ha-stream-control): /view?mode=stream shows them with this same layout
 STREAM_FILE = "/root/.android/stream_url"  # or the env var; e.g. http://192.168.1.20:8005
 STREAM_URL = os.environ.get("ADB_STREAM_URL") or (open(STREAM_FILE).read().strip() if os.path.exists(STREAM_FILE) else "")
+# Remote access (an https tunnel such as Cloudflare's in front of this port): /scrcpy/ and /stream/ forward to ws-scrcpy
+# and to Stream Control, so the viewer works from one https address. Requests that came through Cloudflare must carry
+# this key once (?key=..., kept as a cookie); the LAN needs none, as before.
+KEY_FILE = "/root/.android/remote_key"
+REMOTE_KEY = os.environ.get("ADB_REMOTE_KEY") or (open(KEY_FILE).read().strip() if os.path.exists(KEY_FILE) else "")
 IP_RE = re.compile(r"^\d{1,3}(\.\d{1,3}){3}$")
 SIZE_RE = re.compile(r"(\d+)x(\d+)")
 # Every screen is shown VIEW_HEIGHT px high: the minimum that fits ws-scrcpy's button column without scrollbars.
@@ -165,10 +171,14 @@ VIEW = """<!doctype html><html><head><meta charset="utf-8"><meta name="viewport"
 iframe{border:0;background:#000;border-radius:10px}.empty{padding:40px;color:#888;text-align:center}
 </style></head><body><div id="wrap"><div id="rows"><div class="empty">Cargando…</div></div></div><script>
 const VH=__VIEW_HEIGHT__,  // kept for the page template; sizes below use MINH
-  H=location.hostname, SP=__SCRCPY_PORT__, STREAM=new URLSearchParams(location.search).get("mode")==="stream";
+  H=location.hostname, SP=__SCRCPY_PORT__, STREAM=new URLSearchParams(location.search).get("mode")==="stream",
+  PROXY=location.protocol==="https:";  // opened through the https tunnel: everything goes through this page's own address
 let shown="";
-function link(udid){const ws=`ws://${H}:${SP}/?action=proxy-adb&remote=tcp%3A8886&udid=${encodeURIComponent(udid)}`;
- return `http://${H}:${SP}/#!`+new URLSearchParams({action:"stream",udid,player:"mse",ws,fitToScreen:"true"}).toString();}
+function link(udid){
+ const base=PROXY ? `${location.origin}/scrcpy/` : `http://${H}:${SP}/`;
+ const ws=base.replace(/^http/,"ws")+`?action=proxy-adb&remote=tcp%3A8886&udid=${encodeURIComponent(udid)}`;
+ return base+"#!"+new URLSearchParams({action:"stream",udid,player:"mse",ws,fitToScreen:"true"}).toString();}
+const player=d=>PROXY ? "/stream/"+d.player.split("/").slice(3).join("/") : d.player;
 function fit(){  // scale everything down (never up) so every screen fits the card without scrollbars
  const rows=document.getElementById("rows"); rows.style.transform="none";
  const s=Math.min(1, innerWidth/rows.scrollWidth, innerHeight/rows.scrollHeight);
@@ -189,7 +199,7 @@ const rowWidth=bs=>bs.reduce((s,b)=>s+b.vw+FRAME,0)+GAP*(bs.length-1);
 function screen(b){
  const box=document.createElement("div");box.className="phone";
  const t=document.createElement("b");t.textContent=(b.d.name||b.d.model||"Android")+" · "+b.d.ip;
- const f=document.createElement("iframe");f.src=STREAM ? b.d.player : link(b.d.ip+":5555");
+ const f=document.createElement("iframe");f.src=STREAM ? player(b.d) : link(b.d.ip+":5555");
  const W=b.vw+FRAME, Hh=b.vh;
  // ws-scrcpy keeps the video size a shared stream started with and only refits on a resize; so start 2 px smaller
  // and grow to the final size once the stream is up, which makes it re-apply the bounds of this frame.
@@ -247,10 +257,45 @@ refresh();setInterval(refresh,8000);
 </script></body></html>"""
 
 
+def splice(handler: BaseHTTPRequestHandler, host: str, port: int, path: str) -> None:
+    """Forward this request to host:port with a new path, then copy bytes both ways until either side closes
+    (a WebSocket stays open; a plain request ends with the response, since upstream is asked to close)."""
+    body = handler.rfile.read(int(handler.headers.get("Content-Length") or 0))
+    upgrade = handler.headers.get("Upgrade", "").lower() == "websocket"
+    head = [f"{handler.command} {path} HTTP/1.1", f"Host: {host}:{port}",
+            "Connection: Upgrade" if upgrade else "Connection: close"]
+    head += [f"{k}: {v}" for k, v in handler.headers.items() if k.lower() not in ("host", "connection", "origin")]
+    try:
+        up = socket.create_connection((host, port), timeout=10)
+    except OSError:
+        return handler._reply(502, {"error": "upstream unreachable"})
+    up.sendall(("\r\n".join(head) + "\r\n\r\n").encode() + body)
+    up.settimeout(None)
+
+    def pump(src: socket.socket, dst: socket.socket) -> None:
+        try:
+            while data := src.recv(65536):
+                dst.sendall(data)
+        except OSError:
+            pass
+        for sock in (src, dst):
+            try:
+                sock.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+
+    threading.Thread(target=pump, args=(handler.connection, up), daemon=True).start()
+    pump(up, handler.connection)
+    up.close()
+    handler.close_connection = True
+
+
 class Handler(BaseHTTPRequestHandler):
-    def _reply(self, code: int, body, ctype: str = "application/json") -> None:
+    def _reply(self, code: int, body, ctype: str = "application/json", extra=None) -> None:
         data = body.encode() if isinstance(body, str) else json.dumps(body).encode()
         self.send_response(code)
+        if extra:
+            extra()
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
@@ -262,10 +307,38 @@ class Handler(BaseHTTPRequestHandler):
             return False
         return True
 
+    def _remote_ok(self) -> bool:
+        """Through Cloudflare (it adds Cf-Connecting-Ip), require the key in ?key= or in the cookie it sets."""
+        if not self.headers.get("Cf-Connecting-Ip"):
+            return True
+        key = parse_qs(urlparse(self.path).query).get("key", [""])[0]
+        cookie = re.search(r"(?:^|;\s*)adb_key=([^;]+)", self.headers.get("Cookie", ""))
+        if REMOTE_KEY and REMOTE_KEY in (key, cookie and cookie.group(1)):
+            return True
+        self._reply(403, {"error": "forbidden"})
+        return False
+
+    def _proxy(self) -> bool:
+        """/scrcpy/... -> ws-scrcpy, /stream/... -> Stream Control (plain HTTP and WebSocket), byte for byte."""
+        path = urlparse(self.path).path
+        for prefix, target in (("/scrcpy/", f"http://127.0.0.1:{SCRCPY_PORT}"), ("/stream/", STREAM_URL)):
+            if path.startswith(prefix) and target:
+                u = urlparse(target)
+                splice(self, u.hostname, u.port or 80, "/" + self.path[len(prefix):])
+                return True
+        return False
+
+    def _send_key_cookie(self) -> None:
+        key = parse_qs(urlparse(self.path).query).get("key", [""])[0]
+        if key and key == REMOTE_KEY:
+            self.send_header("Set-Cookie", f"adb_key={key}; Path=/; Secure; HttpOnly; SameSite=Lax")
+
     def do_GET(self):
+        if not self._remote_ok() or self._proxy():
+            return
         if urlparse(self.path).path == "/view":
             page = VIEW.replace("__VIEW_HEIGHT__", str(VIEW_HEIGHT)).replace("__SCRCPY_PORT__", str(SCRCPY_PORT))
-            return self._reply(200, page, "text/html; charset=utf-8")
+            return self._reply(200, page, "text/html; charset=utf-8", self._send_key_cookie)
         if urlparse(self.path).path == "/viewdata":  # what the page needs: ip, state, model, aspect, landscape; the row layout
             layout = json.load(open(LAYOUT_FILE)) if os.path.exists(LAYOUT_FILE) else []
             devices = connected()
@@ -288,7 +361,7 @@ class Handler(BaseHTTPRequestHandler):
         self._reply(404, {"error": "not found"})
 
     def do_POST(self):
-        if not self._ok():
+        if not self._remote_ok() or self._proxy() or not self._ok():
             return
         try:
             body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")

@@ -43,3 +43,26 @@ def test_stream_mode_keeps_devices_with_video_on(monkeypatch):
     assert control.with_streams(devices) == []
     monkeypatch.setattr(control, "STREAM_URL", "")  # stream mode not configured
     assert control.with_streams(devices) == []
+
+
+class _Req:
+    """Just enough of a request handler for the remote key check."""
+    def __init__(self, path, headers):
+        self.path, self.headers, self.replies = path, headers, []
+
+    def _reply(self, code, body, *args):
+        self.replies.append(code)
+
+
+def test_remote_requests_need_the_key(monkeypatch):
+    monkeypatch.setattr(control, "REMOTE_KEY", "s3cret")
+    ok = control.Handler._remote_ok
+    assert ok(_Req("/view", {}))  # LAN: no key needed
+    cf = {"Cf-Connecting-Ip": "203.0.113.5"}
+    denied = _Req("/view", cf)
+    assert not ok(denied) and denied.replies == [403]
+    assert ok(_Req("/view?key=s3cret", cf))
+    assert ok(_Req("/scrcpy/bundle.js", {**cf, "Cookie": "a=1; adb_key=s3cret"}))
+    assert not ok(_Req("/view?key=wrong", cf))
+    monkeypatch.setattr(control, "REMOTE_KEY", "")  # no key configured: nothing gets in through the tunnel
+    assert not ok(_Req("/view?key=", cf))

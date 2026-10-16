@@ -70,6 +70,21 @@ ADB over Wi-Fi on port 5555 has to be enabled once per boot.
 - The container's adb key must be authorized on the device: accept the prompt on the first connection, or reuse a
   key the device already trusts by placing it as `adbkey`/`adbkey.pub` in the data folder.
 
+## Remote access (https)
+
+Home Assistant opened over https (its app away from home, or a reverse proxy) refuses http frames. Publish this
+container's port 8002 at an https address instead, for example with a Cloudflare Tunnel route
+`adbcontrol.example.com → http://<host>:8002`, and use that address in the dashboard:
+
+- `control.py` then serves everything from that one address: the viewer, ws-scrcpy under `/scrcpy/` and Stream
+  Control's players under `/stream/` (HTTP and WebSocket are forwarded as they are);
+- put a long random key in the data folder as `remote_key` (or env `ADB_REMOTE_KEY`) and open the viewer as
+  `https://adbcontrol.example.com/view?key=<key>`: the key is kept as a cookie for the frames and WebSockets;
+- requests that come through Cloudflare (they carry `Cf-Connecting-Ip`) are refused without the key; the LAN keeps
+  working without it, as before. Without a `remote_key`, nothing gets in through the tunnel.
+
+The key sits in the dashboard's configuration, so anyone who can edit your dashboards can see it.
+
 ## Optional files (in the data folder)
 
 | File | Purpose | Example |
@@ -77,6 +92,7 @@ ADB over Wi-Fi on port 5555 has to be enabled once per boot.
 | `layout.json` | preferred order of devices, row by row | `[["192.168.1.21", "192.168.1.22"], ["192.168.1.23"]]` |
 | `names.json` | names shown by the scan instead of network hostnames | `{"192.168.1.22": "Kitchen tablet"}` |
 | `orientation.json`, `hidden.json`, `selected` | written by the switches | — |
+| `remote_key` | key required for requests through the tunnel (or env `ADB_REMOTE_KEY`) | a long random string |
 | `stream_url` | address of [Stream Control](https://github.com/mauriporte/ha-stream-control), for `/view?mode=stream` (or env `ADB_STREAM_URL`) | `http://192.168.1.20:8005` |
 
 ## API
