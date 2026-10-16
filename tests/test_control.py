@@ -66,3 +66,13 @@ def test_remote_requests_need_the_key(monkeypatch):
     assert not ok(_Req("/view?key=wrong", cf))
     monkeypatch.setattr(control, "REMOTE_KEY", "")  # no key configured: nothing gets in through the tunnel
     assert not ok(_Req("/view?key=", cf))
+
+
+def test_key_in_the_frame_path_is_enough(monkeypatch):
+    """App WebViews send no cookies to frames, so the frames carry the key in their path."""
+    monkeypatch.setattr(control, "REMOTE_KEY", "s3cret")
+    cf = {"Cf-Connecting-Ip": "203.0.113.5"}
+    assert control.Handler._remote_ok(_Req("/scrcpy/s3cret/bundle.js", cf))
+    assert control.Handler._remote_ok(_Req("/stream/s3cret/play?src=phone_a", cf))
+    assert not control.Handler._remote_ok(_Req("/scrcpy/nope/bundle.js", cf))
+    assert not control.Handler._remote_ok(_Req("/other/s3cret/x", cf))

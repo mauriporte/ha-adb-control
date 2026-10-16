@@ -172,13 +172,15 @@ iframe{border:0;background:#000;border-radius:10px}.empty{padding:40px;color:#88
 </style></head><body><div id="wrap"><div id="rows"><div class="empty">Cargando…</div></div></div><script>
 const VH=__VIEW_HEIGHT__,  // kept for the page template; sizes below use MINH
   H=location.hostname, SP=__SCRCPY_PORT__, STREAM=new URLSearchParams(location.search).get("mode")==="stream",
-  PROXY=location.protocol==="https:";  // opened through the https tunnel: everything goes through this page's own address
+  PROXY=location.protocol==="https:",  // opened through the https tunnel: everything goes through this page's own address
+  // the key goes into the frames' paths, so their relative files and WebSockets carry it too (no cookies needed)
+  KEY=(k=>k?encodeURIComponent(k)+"/":"")(new URLSearchParams(location.search).get("key"));
 let shown="";
 function link(udid){
- const base=PROXY ? `${location.origin}/scrcpy/` : `http://${H}:${SP}/`;
+ const base=PROXY ? `${location.origin}/scrcpy/${KEY}` : `http://${H}:${SP}/`;
  const ws=base.replace(/^http/,"ws")+`?action=proxy-adb&remote=tcp%3A8886&udid=${encodeURIComponent(udid)}`;
  return base+"#!"+new URLSearchParams({action:"stream",udid,player:"mse",ws,fitToScreen:"true"}).toString();}
-const player=d=>PROXY ? "/stream/"+d.player.split("/").slice(3).join("/") : d.player;
+const player=d=>PROXY ? `/stream/${KEY}`+d.player.split("/").slice(3).join("/") : d.player;
 function fit(){  // scale everything down (never up) so every screen fits the card without scrollbars
  const rows=document.getElementById("rows"); rows.style.transform="none";
  const s=Math.min(1, innerWidth/rows.scrollWidth, innerHeight/rows.scrollHeight);
@@ -257,6 +259,9 @@ refresh();setInterval(refresh,8000);
 </script></body></html>"""
 
 
+PROXY_PREFIXES = ("/scrcpy/", "/stream/")
+
+
 def splice(handler: BaseHTTPRequestHandler, host: str, port: int, path: str) -> None:
     """Forward this request to host:port with a new path, then copy bytes both ways until either side closes
     (a WebSocket stays open; a plain request ends with the response, since upstream is asked to close)."""
@@ -308,10 +313,14 @@ class Handler(BaseHTTPRequestHandler):
         return True
 
     def _remote_ok(self) -> bool:
-        """Through Cloudflare (it adds Cf-Connecting-Ip), require the key in ?key= or in the cookie it sets."""
+        """Through Cloudflare (it adds Cf-Connecting-Ip), require the key: in ?key=, in the frames' own path
+        (/scrcpy/<key>/..., /stream/<key>/...; app WebViews send no cookies to frames) or in the cookie /view sets."""
         if not self.headers.get("Cf-Connecting-Ip"):
             return True
         key = parse_qs(urlparse(self.path).query).get("key", [""])[0]
+        parts = urlparse(self.path).path.split("/")
+        if len(parts) > 2 and "/" + parts[1] + "/" in PROXY_PREFIXES and parts[2] == REMOTE_KEY:
+            key = parts[2]
         cookie = re.search(r"(?:^|;\s*)adb_key=([^;]+)", self.headers.get("Cookie", ""))
         if REMOTE_KEY and REMOTE_KEY in (key, cookie and cookie.group(1)):
             return True
@@ -323,8 +332,11 @@ class Handler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         for prefix, target in (("/scrcpy/", f"http://127.0.0.1:{SCRCPY_PORT}"), ("/stream/", STREAM_URL)):
             if path.startswith(prefix) and target:
+                rest = self.path[len(prefix):]
+                if REMOTE_KEY and rest.startswith(REMOTE_KEY + "/"):
+                    rest = rest[len(REMOTE_KEY) + 1:]  # the key in the path is for us, not for the service behind
                 u = urlparse(target)
-                splice(self, u.hostname, u.port or 80, "/" + self.path[len(prefix):])
+                splice(self, u.hostname, u.port or 80, "/" + rest)
                 return True
         return False
 

@@ -79,7 +79,9 @@ container's port 8002 at an https address instead, for example with a Cloudflare
 - `control.py` then serves everything from that one address: the viewer, ws-scrcpy under `/scrcpy/` and Stream
   Control's players under `/stream/` (HTTP and WebSocket are forwarded as they are);
 - put a long random key in the data folder as `remote_key` (or env `ADB_REMOTE_KEY`) and open the viewer as
-  `https://adbcontrol.example.com/view?key=<key>`: the key is kept as a cookie for the frames and WebSockets;
+  `https://adbcontrol.example.com/view?key=<key>`: the page puts the key in its frames' paths
+  (`/scrcpy/<key>/…`, `/stream/<key>/…`), so their files and WebSockets carry it too (app WebViews send no cookies
+  to frames);
 - requests that come through Cloudflare (they carry `Cf-Connecting-Ip`) are refused without the key; the LAN keeps
   working without it, as before. Without a `remote_key`, nothing gets in through the tunnel.
 
