@@ -1,0 +1,134 @@
+# Home Assistant configuration for ADB Control. Merge these blocks into configuration.yaml
+# (add the entries to your existing switch:/sensor:/template:/rest_command: lists if you already have them).
+# Replace 192.168.1.10 with the host running the container, and the device IPs with yours.
+# secrets.yaml must contain:  adb_control_token: <the same value as ADB_CONTROL_TOKEN>
+
+rest_command:
+  adb_scan:
+    url: http://192.168.1.10:8002/scan
+    method: post
+    headers:
+      X-Token: !secret adb_control_token
+    timeout: 150
+  adb_select:
+    url: http://192.168.1.10:8002/select
+    method: post
+    headers:
+      X-Token: !secret adb_control_token
+      Content-Type: application/json
+    payload: '{"ip": "{{ ip }}"}'
+    timeout: 15
+
+switch:
+  # Connect / disconnect the device chosen in input_select.adb_dispositivo (several can be connected at once)
+  - platform: rest
+    name: ADB Control
+    unique_id: adb_control
+    resource: http://192.168.1.10:8002/switch
+    state_resource: http://192.168.1.10:8002/status
+    method: post
+    body_on: >-
+      {{ {"ip": states("input_select.adb_dispositivo"), "on": true} | to_json }}
+    body_off: >-
+      {{ {"ip": states("input_select.adb_dispositivo"), "on": false} | to_json }}
+    is_on_template: "{{ value_json.is_on }}"
+    headers:
+      X-Token: !secret adb_control_token
+      Content-Type: application/json
+    timeout: 30
+
+  # Per device (repeat for each one, changing name, unique_id and ip):
+  # landscape frame in the viewer (the device itself is not rotated)
+  - platform: rest
+    name: Phone A horizontal
+    unique_id: adb_phone_a_landscape
+    resource: http://192.168.1.10:8002/orientation
+    state_resource: http://192.168.1.10:8002/orientation?ip=192.168.1.21
+    method: post
+    body_on: '{"ip": "192.168.1.21", "landscape": true}'
+    body_off: '{"ip": "192.168.1.21", "landscape": false}'
+    is_on_template: "{{ value_json.is_on }}"
+    headers:
+      X-Token: !secret adb_control_token
+      Content-Type: application/json
+  # show / hide the device's screen in the viewer (it stays connected)
+  - platform: rest
+    name: Pantalla Phone A
+    unique_id: adb_phone_a_display
+    resource: http://192.168.1.10:8002/display
+    state_resource: http://192.168.1.10:8002/display?ip=192.168.1.21
+    method: post
+    body_on: '{"ip": "192.168.1.21", "show": true}'
+    body_off: '{"ip": "192.168.1.21", "show": false}'
+    is_on_template: "{{ value_json.is_on }}"
+    headers:
+      X-Token: !secret adb_control_token
+      Content-Type: application/json
+
+sensor:
+  - platform: rest
+    name: ADB dispositivos conectados
+    unique_id: adb_connected
+    resource: http://192.168.1.10:8002/status
+    headers:
+      X-Token: !secret adb_control_token
+    value_template: "{{ value_json.connected | selectattr('state', 'eq', 'device') | list | count }}"
+    json_attributes:
+      - connected
+    scan_interval: 15
+
+template:
+  - binary_sensor:
+      # one per device: used to show its switches only while it is connected
+      - name: ADB Phone A conectado
+        unique_id: adb_phone_a_connected
+        device_class: connectivity
+        state: >-
+          {{ (state_attr('sensor.adb_dispositivos_conectados', 'connected') or [])
+             | selectattr('ip', 'eq', '192.168.1.21') | selectattr('state', 'eq', 'device') | list | count > 0 }}
+
+# Create with the UI (Settings → Devices & services → Helpers) or in YAML:
+input_select:
+  adb_dispositivo:
+    name: ADB dispositivo
+    icon: mdi:cellphone-link
+    options:
+      - "(pulsa Buscar)"
+
+script:
+  adb_buscar:
+    alias: "ADB: buscar dispositivos"
+    icon: mdi:magnify-scan
+    sequence:
+      - action: rest_command.adb_scan
+        response_variable: r
+      - variables:
+          found: "{{ r.content.devices if r.status == 200 and r.content is mapping else [] }}"
+      - action: input_select.set_options
+        target:
+          entity_id: input_select.adb_dispositivo
+        data:
+          options: "{{ found if found | count > 0 else ['(ninguno encontrado)'] }}"
+
+automation:
+  - alias: "ADB: dispositivo seleccionado"
+    mode: restart
+    triggers:
+      - trigger: state
+        entity_id: input_select.adb_dispositivo
+      - trigger: homeassistant
+        event: start
+    actions:
+      - action: rest_command.adb_select
+        data:
+          ip: "{{ states('input_select.adb_dispositivo') }}"
+      - action: homeassistant.update_entity
+        target:
+          entity_id: switch.adb_control
+  - alias: "ADB: buscar al arrancar"
+    triggers:
+      - trigger: homeassistant
+        event: start
+    actions:
+      - delay: { seconds: 20 }
+      - action: script.adb_buscar
