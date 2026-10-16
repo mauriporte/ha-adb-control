@@ -44,6 +44,8 @@ SELECTED_FILE = "/root/.android/selected"  # on the volume, so a restart keeps t
 state = {"selected": open(SELECTED_FILE).read().strip() if os.path.exists(SELECTED_FILE) else ""}
 LAYOUT_FILE = "/root/.android/layout.json"  # rows of IPs, top to bottom, e.g. [["192.168.1.21", "192.168.1.22"], ...]
 NAMES_FILE = "/root/.android/names.json"  # ip -> name shown by the scan instead of the network hostname
+KNOWN_FILE = "/root/.android/known.json"  # ip -> last read name/model/aspect/tablet: the stream viewer shows devices
+# that are streaming while not connected here
 HIDDEN_FILE = "/root/.android/hidden.json"  # IPs whose screen the viewer leaves out
 hidden: set[str] = set(json.load(open(HIDDEN_FILE))) if os.path.exists(HIDDEN_FILE) else set()
 ORIENT_FILE = "/root/.android/orientation.json"  # ip -> landscape (bool); devices not listed: tablets landscape
@@ -94,6 +96,11 @@ def device_info(serial: str) -> dict:
             "aspect": round(max(w, h) / min(w, h), 4),
             "tablet": "tablet" in sh("getprop", "ro.build.characteristics"),
         }
+        known = json.load(open(KNOWN_FILE)) if os.path.exists(KNOWN_FILE) else {}
+        if known.get(ip) != INFO[serial]:
+            known[ip] = INFO[serial]
+            with open(KNOWN_FILE, "w") as f:
+                json.dump(known, f)
     return INFO[serial]
 
 
@@ -146,6 +153,10 @@ def with_streams(devices: list[dict]) -> list[dict]:
     if not data.get("on"):
         return []
     streams = data.get("streams", {})
+    known = json.load(open(KNOWN_FILE)) if os.path.exists(KNOWN_FILE) else {}
+    here = {d["ip"] for d in devices}
+    devices = devices + [{"ip": ip, "state": "device", **known[ip], "landscape": orient.get(ip, known[ip]["tablet"]),
+                          "shown": True} for ip in streams if ip not in here and ip in known]
     return [{**d, "player": f"{STREAM_URL}/play?src={streams[d['ip']]['src']}"}
             for d in devices if streams.get(d["ip"], {}).get("video")]
 

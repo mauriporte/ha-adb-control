@@ -20,7 +20,8 @@ project [Stream Control](https://github.com/mauriporte/ha-stream-control), which
   - **horizontal:** a landscape frame for apps that run in landscape (the device itself is not rotated);
   - **show/hide:** the device stays connected but leaves the viewer.
 - Touch, keys (back, home, recents, power, volume) and keyboard through ws-scrcpy's own buttons.
-- Dashboard: a panel view with the main controls on top, one card per device with its switches, then the screens.
+- Dashboard: a panel view with one card per device (its own **ADB Control** switch on top, its other switches while
+  it is connected), then the screens. The scan and the device selector remain available for finding new devices.
 
 ## How it works
 
@@ -95,6 +96,7 @@ The key sits in the dashboard's configuration, so anyone who can edit your dashb
 | `names.json` | names shown by the scan instead of network hostnames | `{"192.168.1.22": "Kitchen tablet"}` |
 | `orientation.json`, `hidden.json`, `selected` | written by the switches | — |
 | `remote_key` | key required for requests through the tunnel (or env `ADB_REMOTE_KEY`) | a long random string |
+| `known.json` | written: each device's last name/size, so Stream Control's viewer can show it while not connected here | — |
 | `stream_url` | address of [Stream Control](https://github.com/mauriporte/ha-stream-control), for `/view?mode=stream` (or env `ADB_STREAM_URL`) | `http://192.168.1.20:8005` |
 
 ## API

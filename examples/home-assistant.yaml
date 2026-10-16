@@ -18,6 +18,23 @@ rest_command:
       Content-Type: application/json
     payload: '{"ip": "{{ ip }}"}'
     timeout: 15
+  adb_connect:
+    url: http://192.168.1.10:8002/connect
+    method: post
+    headers:
+      X-Token: !secret adb_control_token
+      Content-Type: application/json
+    payload: '{"ip": "{{ ip }}"}'
+    timeout: 30
+  adb_disconnect:
+    url: http://192.168.1.10:8002/disconnect
+    method: post
+    headers:
+      X-Token: !secret adb_control_token
+      Content-Type: application/json
+    # with ip: that device only; without: all of them
+    payload: '{"ip": "{{ ip | default }}"}'
+    timeout: 30
 
 switch:
   # Connect / disconnect the device chosen in input_select.adb_dispositivo (several can be connected at once)
@@ -78,6 +95,22 @@ sensor:
     scan_interval: 15
 
 template:
+  # ADB Control per device (the switch at the top of each device's card): connect / disconnect that device
+  - switch:
+      - name: ADB Phone A
+        unique_id: adb_phone_a_control
+        icon: mdi:cellphone-link
+        state: "{{ is_state('binary_sensor.adb_phone_a_conectado', 'on') }}"
+        turn_on:
+          - action: rest_command.adb_connect
+            data: { ip: "192.168.1.21" }
+          - action: homeassistant.update_entity
+            target: { entity_id: sensor.adb_dispositivos_conectados }
+        turn_off:
+          - action: rest_command.adb_disconnect
+            data: { ip: "192.168.1.21" }
+          - action: homeassistant.update_entity
+            target: { entity_id: sensor.adb_dispositivos_conectados }
   - binary_sensor:
       # one per device: used to show its switches only while it is connected
       - name: ADB Phone A conectado

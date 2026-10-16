@@ -76,3 +76,17 @@ def test_key_in_the_frame_path_is_enough(monkeypatch):
     assert control.Handler._remote_ok(_Req("/stream/s3cret/play?src=phone_a", cf))
     assert not control.Handler._remote_ok(_Req("/scrcpy/nope/bundle.js", cf))
     assert not control.Handler._remote_ok(_Req("/other/s3cret/x", cf))
+
+
+def test_stream_mode_shows_known_devices_not_connected_here(monkeypatch, tmp_path):
+    import io
+    import json
+
+    known = tmp_path / "known.json"
+    known.write_text(json.dumps({"192.168.1.23": {"name": "Tablet", "model": "Pad", "aspect": 1.6, "tablet": True}}))
+    reply = {"on": True, "streams": {"192.168.1.23": {"src": "tablet", "video": True}}}
+    monkeypatch.setattr(control, "KNOWN_FILE", str(known))
+    monkeypatch.setattr(control, "STREAM_URL", "http://stream:8005")
+    monkeypatch.setattr(control.urllib.request, "urlopen", lambda req, timeout: io.BytesIO(json.dumps(reply).encode()))
+    [d] = control.with_streams([])  # streaming, but not connected to ADB Control
+    assert d["ip"] == "192.168.1.23" and d["landscape"] is True and d["player"].endswith("/play?src=tablet")
