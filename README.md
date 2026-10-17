@@ -20,8 +20,10 @@ project [Stream Control](https://github.com/mauriporte/ha-stream-control), which
   - **horizontal:** a landscape frame for apps that run in landscape (the device itself is not rotated);
   - **show/hide:** the device stays connected but leaves the viewer.
 - Touch, keys (back, home, recents, power, volume) and keyboard through ws-scrcpy's own buttons.
-- Dashboard: a panel view with one card per device (its own **ADB Control** switch on top, its other switches while
-  it is connected), then the screens. The scan and the device selector remain available for finding new devices.
+- Dashboard: one full-width section with a card per device (its name with the battery level on the right, its own
+  **ADB Control** switch on top, its other switches while it is connected), then the screens. The battery comes from
+  the Home Assistant companion app and is optional. The scan and the device selector remain available for finding
+  new devices.
 
 ## How it works
 
