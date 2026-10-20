@@ -18,6 +18,7 @@ import re
 import socket
 import subprocess
 import threading
+import time
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
@@ -104,6 +105,19 @@ def device_info(serial: str) -> dict:
     return INFO[serial]
 
 
+BATTERY: dict[str, tuple[float, int | None]] = {}  # serial -> (read at, level)
+
+
+def battery(serial: str) -> int | None:
+    """Battery level read over ADB (at most once a minute): the HA app on a tablet often sleeps and stops reporting it."""
+    t, level = BATTERY.get(serial, (0, None))
+    if time.time() - t > 60:
+        m = re.search(r"^\s*level:\s*(\d+)", run("adb", "-s", serial, "shell", "dumpsys", "battery", timeout=8), re.M)
+        level = int(m.group(1)) if m else level
+        BATTERY[serial] = (time.time(), level)
+    return level
+
+
 def connected() -> list[dict]:
     devices, live = [], set()
     for line in run("adb", "devices").splitlines()[1:]:
@@ -114,7 +128,8 @@ def connected() -> list[dict]:
         info = device_info(serial) if st == "device" else {"name": "", "model": "", "aspect": 16 / 9, "tablet": False}
         live.add(serial)
         ip = serial.split(":")[0]
-        devices.append({"ip": ip, "state": st, **info, "landscape": orient.get(ip, info["tablet"]), "shown": ip not in hidden})
+        devices.append({"ip": ip, "state": st, **info, "landscape": orient.get(ip, info["tablet"]), "shown": ip not in hidden,
+                        "battery": battery(serial) if st == "device" else None})
     for gone in set(INFO) - live:  # forget disconnected devices, so another device on the same IP is read again
         INFO.pop(gone)
     return devices

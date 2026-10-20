@@ -90,3 +90,13 @@ def test_stream_mode_shows_known_devices_not_connected_here(monkeypatch, tmp_pat
     monkeypatch.setattr(control.urllib.request, "urlopen", lambda req, timeout: io.BytesIO(json.dumps(reply).encode()))
     [d] = control.with_streams([])  # streaming, but not connected to ADB Control
     assert d["ip"] == "192.168.1.23" and d["landscape"] is True and d["player"].endswith("/play?src=tablet")
+
+
+def test_battery_is_read_from_dumpsys_and_cached(monkeypatch):
+    calls = []
+    out = "Current Battery Service state:\n  AC powered: false\n  status: 3\n  level: 87\n  scale: 100\n"
+    monkeypatch.setattr(control, "run", lambda *c, **k: calls.append(c) or out)
+    control.BATTERY.clear()
+    assert control.battery("192.168.1.22:5555") == 87
+    assert control.battery("192.168.1.22:5555") == 87
+    assert len(calls) == 1  # second read within a minute comes from the cache

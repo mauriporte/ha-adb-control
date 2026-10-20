@@ -22,7 +22,8 @@ project [Stream Control](https://github.com/mauriporte/ha-stream-control), which
 - Touch, keys (back, home, recents, power, volume) and keyboard through ws-scrcpy's own buttons.
 - Dashboard: one full-width section with a card per device (its name with the battery level on the right, its own
   **ADB Control** switch on top, its other switches while it is connected), then the screens. The battery comes from
-  the Home Assistant companion app and is optional. The scan and the device selector remain available for finding
+  the Home Assistant companion app and is optional. `GET /status` also gives each connected device's `battery`
+  (read over ADB, at most once a minute), for devices whose companion app sleeps and stops reporting it. The scan and the device selector remain available for finding
   new devices.
 
 ## How it works
