@@ -111,3 +111,19 @@ def test_pair_target_and_wanted(tmp_path, monkeypatch):
     assert json.load(open(control.WANTED_FILE)) == ["192.168.1.23"]
     control.set_wanted(None, False)  # «disconnect all»
     assert json.load(open(control.WANTED_FILE)) == []
+
+
+def test_stay_awake_only_touches_listed_devices(tmp_path, monkeypatch):
+    import json
+
+    f = tmp_path / "stay_awake.json"
+    f.write_text(json.dumps({"192.168.1.22": 60000}))
+    calls = []
+    monkeypatch.setattr(control, "AWAKE_FILE", str(f))
+    monkeypatch.setattr(control, "run", lambda *a, **k: calls.append(a) or "")
+    control.stay_awake("192.168.1.21", True)  # not listed: nothing happens
+    assert calls == []
+    control.stay_awake("192.168.1.22", True)
+    control.stay_awake(None, False)  # «disconnect all» restores every listed device
+    assert [c[-1] for c in calls] == [str(control.NEVER), "60000"]
+    assert all(c[2] == "192.168.1.22:5555" for c in calls)

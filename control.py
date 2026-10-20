@@ -154,6 +154,20 @@ def set_wanted(ip: str | None, on: bool) -> None:
         json.dump(sorted(w), f)
 
 
+AWAKE_FILE = "/root/.android/stay_awake.json"  # ip -> its normal screen timeout (ms); listed devices never sleep while switched on here
+NEVER = 2147483647
+
+
+def stay_awake(ip: str | None, on: bool) -> None:
+    """Keep a listed device's screen from timing out (so it doesn't lock) while it is switched on in ADB Control;
+    switching it off puts its normal timeout back. The lock code itself is never touched."""
+    awake = json.load(open(AWAKE_FILE)) if os.path.exists(AWAKE_FILE) else {}
+    for dev, normal in awake.items():
+        if ip in (None, dev):
+            run("adb", "-s", f"{dev}:5555", "shell", "settings", "put", "system", "screen_off_timeout",
+                str(NEVER if on else int(normal)), timeout=8)
+
+
 def reconnect_loop() -> None:
     """After a reboot a device's ADB on 5555 is gone and Wireless debugging listens on a random port, which the
     device announces over mDNS. For devices switched on here (and paired once with /pair): connect over that port,
@@ -182,6 +196,8 @@ def reconnect_loop() -> None:
                 run("adb", "connect", f"{ip}:5555", timeout=15)
                 run("adb", "disconnect", tls)
                 print(f"reconnected {ip} after a restart (wireless debugging {tls} -> 5555)", flush=True)
+            for ip in wanted & live:  # also after a reconnect or a device reboot
+                stay_awake(ip, True)
         except Exception as e:  # never let the loop die
             print("reconnect loop:", type(e).__name__, e, flush=True)
 
@@ -481,6 +497,7 @@ class Handler(BaseHTTPRequestHandler):
             self.path = "/connect" if body.get("on") else "/disconnect"
         if self.path == "/disconnect":
             ip = ip_of(body.get("ip"))
+            stay_awake(ip or None, False)  # while still connected
             run("adb", "disconnect", f"{ip}:5555") if ip else run("adb", "disconnect")
             set_wanted(ip or None, False)
             return self._reply(200, status())
@@ -490,6 +507,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._reply(400, {"error": "ip must be an IPv4 address"})
             out = run("adb", "connect", f"{ip}:5555").strip()
             set_wanted(ip, True)
+            stay_awake(ip, True)
             return self._reply(200, {**status(), "adb": out})
         if self.path == "/pair":  # {"target": "ip:port", "code": "123456"} from the device's «pair with code» screen
             target, code = str(body.get("target", "")).strip(), str(body.get("code", "")).strip()
