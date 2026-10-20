@@ -57,16 +57,20 @@ viewer page and ws-scrcpy itself have **no authentication**, so keep ports 8001/
 
 ## Preparing each device
 
-ADB over Wi-Fi on port 5555 has to be enabled once per boot.
+ADB over Wi-Fi on port 5555 is lost on every reboot. On **Android 11+** pair the device once with ADB Control and it
+brings it back by itself:
 
-- **Android 11+ (no cable):** Developer options → **Wireless debugging** → *Pair device with pairing code*, then from
-  any computer with a recent adb:
+1. On the device: Developer options → **Wireless debugging** on (allow it always on your network) → *Pair device with
+   pairing code*.
+2. Send the address and code to ADB Control: `POST /pair {"target": "<ip>:<pairing port>", "code": "123456"}` (for
+   example from a Home Assistant `rest_command`), or `docker exec adb-control adb pair <ip>:<port> <code>`.
+3. Switch the device on in ADB Control once. From then on, every minute it reconnects the devices you switched on: a
+   device still on 5555 is just connected again; after a reboot it finds the device's wireless-debugging port over
+   mDNS, connects there and runs `adb tcpip 5555` for you. Devices you switched off stay off.
 
-  ```sh
-  adb pair <ip>:<pairing port> <code>
-  adb connect <ip>:<connection port>    # the port shown on the Wireless debugging screen
-  adb -s <ip>:<connection port> tcpip 5555
-  ```
+This needs adb 31 or newer in the container (pairing needs 30+): the Debian package is older, so install Google's
+platform-tools in the data folder and point `/usr/bin/adb` at it. It also needs Wireless debugging to stay on after a
+reboot (some phones switch it off; then turn it on again).
 
 - **Older Android:** enable USB debugging, connect it by USB once and run `adb tcpip 5555`.
 - **Xiaomi / POCO / Redmi:** also enable *USB debugging (Security settings)*, or you will see the screen but touches

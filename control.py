@@ -1,4 +1,5 @@
 # ADB control API for Home Assistant, next to ws-scrcpy (same container, same adb server).
+#   POST /pair  {"target": "ip:port", "code": "123456"}  pair once with a device («Wireless debugging → pair with code»)
 #   GET  /status               -> {"is_on": <selected phone connected>, "selected": ip, "connected": [...]}
 #   POST /scan                 -> {"devices": ["192.168.1.x (hostname)", ...]}  hosts with ADB over TCP (port 5555) open
 #   POST /select {"ip": ...}   -> remember which phone the HA switch refers to
@@ -19,6 +20,10 @@ import socket
 import subprocess
 import threading
 import time
+
+# adb 31+ auto-connects to paired devices over their wireless-debugging port too; the viewer would then start a second
+# session per device. ADB Control brings devices back on 5555 itself (reconnect_loop), so that is switched off.
+os.environ["ADB_MDNS_AUTO_CONNECT"] = "0"
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
@@ -133,6 +138,52 @@ def connected() -> list[dict]:
     for gone in set(INFO) - live:  # forget disconnected devices, so another device on the same IP is read again
         INFO.pop(gone)
     return devices
+
+
+WANTED_FILE = "/root/.android/wanted.json"  # devices switched on in ADB Control: only these are brought back
+PAIR_TARGET = re.compile(r"(?:\d{1,3}\.){3}\d{1,3}:\d{2,5}")
+
+
+def set_wanted(ip: str | None, on: bool) -> None:
+    w = set(json.load(open(WANTED_FILE))) if os.path.exists(WANTED_FILE) else set()
+    if ip is None:
+        w = set() if not on else w  # «disconnect all»
+    else:
+        (w.add if on else w.discard)(ip)
+    with open(WANTED_FILE, "w") as f:
+        json.dump(sorted(w), f)
+
+
+def reconnect_loop() -> None:
+    """After a reboot a device's ADB on 5555 is gone and Wireless debugging listens on a random port, which the
+    device announces over mDNS. For devices switched on here (and paired once with /pair): connect over that port,
+    put ADB back on 5555 (adb tcpip) and connect there, as before the reboot."""
+    while True:
+        time.sleep(60)
+        try:
+            wanted = set(json.load(open(WANTED_FILE))) if os.path.exists(WANTED_FILE) else set()
+            live = {d["ip"] for d in connected() if d["state"] == "device"}
+            for line in run("adb", "devices").splitlines():  # leftovers of an automatic wireless session
+                serial = line.split("	")[0]
+                if "._adb-tls-connect._tcp" in serial:
+                    run("adb", "disconnect", serial)
+            for ip in wanted - live:  # still on 5555 (e.g. after this container restarted): just connect again
+                if "connected" in run("adb", "connect", f"{ip}:5555", timeout=10):
+                    live.add(ip)
+            for line in run("adb", "mdns", "services", timeout=15).splitlines():
+                m = re.search(r"_adb-tls-connect\._tcp\s+((?:\d{1,3}\.){3}\d{1,3}):(\d+)", line)
+                if not m or m.group(1) not in wanted or m.group(1) in live:
+                    continue
+                ip, tls = m.group(1), f"{m.group(1)}:{m.group(2)}"
+                if "connected" not in run("adb", "connect", tls, timeout=15):
+                    continue  # not paired with this computer yet: pair once with /pair
+                run("adb", "-s", tls, "tcpip", "5555", timeout=15)
+                time.sleep(4)
+                run("adb", "connect", f"{ip}:5555", timeout=15)
+                run("adb", "disconnect", tls)
+                print(f"reconnected {ip} after a restart (wireless debugging {tls} -> 5555)", flush=True)
+        except Exception as e:  # never let the loop die
+            print("reconnect loop:", type(e).__name__, e, flush=True)
 
 
 def scan() -> list[str]:
@@ -431,13 +482,21 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/disconnect":
             ip = ip_of(body.get("ip"))
             run("adb", "disconnect", f"{ip}:5555") if ip else run("adb", "disconnect")
+            set_wanted(ip or None, False)
             return self._reply(200, status())
         if self.path == "/connect":
             ip = ip_of(body.get("ip"))
             if not ip:
                 return self._reply(400, {"error": "ip must be an IPv4 address"})
             out = run("adb", "connect", f"{ip}:5555").strip()
+            set_wanted(ip, True)
             return self._reply(200, {**status(), "adb": out})
+        if self.path == "/pair":  # {"target": "ip:port", "code": "123456"} from the device's «pair with code» screen
+            target, code = str(body.get("target", "")).strip(), str(body.get("code", "")).strip()
+            if not PAIR_TARGET.fullmatch(target) or not re.fullmatch(r"\d{6}", code):
+                return self._reply(400, {"error": "target must be ip:port and code 6 digits"})
+            out = run("adb", "pair", target, code, timeout=30).strip()
+            return self._reply(200, {"ok": "Successfully paired" in out, "adb": out[-300:]})
         self._reply(404, {"error": "not found"})
 
     def log_message(self, *args):
@@ -445,4 +504,5 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
+    threading.Thread(target=reconnect_loop, daemon=True).start()
     ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()

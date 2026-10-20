@@ -100,3 +100,14 @@ def test_battery_is_read_from_dumpsys_and_cached(monkeypatch):
     assert control.battery("192.168.1.22:5555") == 87
     assert control.battery("192.168.1.22:5555") == 87
     assert len(calls) == 1  # second read within a minute comes from the cache
+
+
+def test_pair_target_and_wanted(tmp_path, monkeypatch):
+    assert control.PAIR_TARGET.fullmatch("192.168.1.22:37281")
+    assert not control.PAIR_TARGET.fullmatch("192.168.1.22:37281;id")
+    monkeypatch.setattr(control, "WANTED_FILE", str(tmp_path / "wanted.json"))
+    control.set_wanted("192.168.1.22", True); control.set_wanted("192.168.1.23", True); control.set_wanted("192.168.1.22", False)
+    import json
+    assert json.load(open(control.WANTED_FILE)) == ["192.168.1.23"]
+    control.set_wanted(None, False)  # «disconnect all»
+    assert json.load(open(control.WANTED_FILE)) == []
