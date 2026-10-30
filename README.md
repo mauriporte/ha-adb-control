@@ -100,6 +100,7 @@ The key sits in the dashboard's configuration, so anyone who can edit your dashb
 | File | Purpose | Example |
 |---|---|---|
 | `layout.json` | preferred order of devices, row by row | `[["192.168.1.21", "192.168.1.22"], ["192.168.1.23"]]` |
+| `stick.json` | a screen that always sits right under another one (same column, next row), e.g. a watch under its phone | `{"192.168.1.24": "192.168.1.22"}` |
 | `names.json` | names shown by the scan instead of network hostnames | `{"192.168.1.22": "Kitchen tablet"}` |
 | `stay_awake.json` | devices whose screen never times out (so they don't lock) while switched on here; switching off restores the value (ms) | `{"192.168.1.22": 60000}` |
 | `orientation.json`, `hidden.json`, `selected` | written by the switches | — |

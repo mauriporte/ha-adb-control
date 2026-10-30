@@ -48,6 +48,7 @@ VIEW_HEIGHT = 410
 INFO: dict[str, dict] = {}  # per serial: model, aspect (long/short side), tablet; read once per connection
 SELECTED_FILE = "/root/.android/selected"  # on the volume, so a restart keeps the phone the HA switch refers to
 state = {"selected": open(SELECTED_FILE).read().strip() if os.path.exists(SELECTED_FILE) else ""}
+STICK_FILE = "/root/.android/stick.json"  # ip -> ip it always sits right under (same column, next row), e.g. a watch under its phone
 LAYOUT_FILE = "/root/.android/layout.json"  # rows of IPs, top to bottom, e.g. [["192.168.1.21", "192.168.1.22"], ...]
 NAMES_FILE = "/root/.android/names.json"  # ip -> name shown by the scan instead of the network hostname
 KNOWN_FILE = "/root/.android/known.json"  # ip -> last read name/model/aspect/tablet: the stream viewer shows devices
@@ -329,7 +330,7 @@ function render(rows,list){
 async function refresh(){try{
  const data=await (await fetch("/viewdata"+location.search)).json();
  const devs=data.devices.filter(d=>d.state==="device" && d.shown);  // hidden screens stay connected, just not shown
- const key=JSON.stringify(data.layout)+devs.map(d=>d.ip+(d.landscape?"L":"P")).join(",");
+ const key=JSON.stringify(data.layout)+JSON.stringify(data.stick)+devs.map(d=>d.ip+(d.landscape?"L":"P")).join(",");
  if(key===shown)return; shown=key;  // only rebuild when the devices or their orientation change, so streams are not restarted
  const rows=document.getElementById("rows"); rows.replaceChildren();
  if(!devs.length){const e=document.createElement("div");e.className="empty";e.textContent=STREAM ? "Stream apagado o ningún vídeo encendido." : "Ningún dispositivo conectado. Elige uno en «Dispositivo» y enciende ADB Control.";rows.append(e);fit();return;}
@@ -344,6 +345,17 @@ async function refresh(){try{
  for(let i=0;i<pairs;i++) list.push([port[i],land[i]]);
  const left=[...port.slice(pairs),...land.slice(pairs)];
  for(let i=0;i<left.length;i+=2) list.push(left.slice(i,i+2));
+ // stick.json: a screen always goes in the row right under another one, in its column (the pairing above can put
+ // them side by side when devices are missing). shortcut: under a right-column screen with nothing beside it, the
+ // single screen is placed by its orientation like any lone screen.
+ for(const [ip,above] of Object.entries(data.stick||{})){
+  if(!list.some(r=>r.some(x=>x.ip===above)) || !list.some(r=>r.some(x=>x.ip===ip))) continue;  // both on screen, or as usual
+  let d=null; list.forEach(r=>{const i=r.findIndex(x=>x.ip===ip); if(i>=0) d=r.splice(i,1)[0];});
+  for(let i=list.length-1;i>=0;i--) if(!list[i].length) list.splice(i,1);
+  const ra=list.findIndex(r=>r.some(x=>x.ip===above)), c=list[ra].findIndex(x=>x.ip===above);
+  if(ra+1>=list.length) list.push([]);
+  const row=list[ra+1]; row.splice(Math.min(c,row.length),0,d);
+  if(row.length>2) list.splice(ra+2,0,[row.pop()]);}
  render(rows,list);
  fit();
 }catch(e){}}
@@ -449,7 +461,8 @@ class Handler(BaseHTTPRequestHandler):
             devices = connected()
             if "mode=stream" in self.path:  # only devices with a stream whose Video switch is on, while Stream is on
                 devices = with_streams(devices)
-            return self._reply(200, {"devices": devices, "layout": layout})
+            stick = json.load(open(STICK_FILE)) if os.path.exists(STICK_FILE) else {}
+            return self._reply(200, {"devices": devices, "layout": layout, "stick": stick})
         if not self._ok():
             return
         if self.path.startswith("/display"):
