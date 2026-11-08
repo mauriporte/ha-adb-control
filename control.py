@@ -269,9 +269,19 @@ const VH=__VIEW_HEIGHT__,  // kept for the page template; sizes below use MINH
   PROXY=location.protocol==="https:",  // opened through the https tunnel: everything goes through this page's own address
   // the key goes into the frames' paths, so their relative files and WebSockets carry it too (no cookies needed)
   KEY=(k=>k?encodeURIComponent(k)+"/":"")(new URLSearchParams(location.search).get("key"));
+// ws-scrcpy's device buttons in the A.R.T. look (round, near-black, orange when pressed), same as every A.R.T. app
+const SKIN=[
+ "::-webkit-scrollbar{display:none}","html,body{overflow:hidden!important;background:#000}",
+ ".control-buttons-list{overflow:hidden!important;justify-content:space-evenly;align-items:center;padding:.4rem 0;box-sizing:border-box;background:#000!important}",
+ ".control-button{margin:0!important;flex-shrink:0;width:1.95rem!important;height:1.95rem!important;border-radius:999px;background:#1C1C1E!important;opacity:1!important;display:flex;align-items:center;justify-content:center}",
+ ".control-button>svg{fill:#d8d8d8!important;width:60%;height:60%}",".control-button:hover>svg{fill:#E8650A!important}",
+ ".control-button:active{background:#E8650A!important}",".control-button:active>svg{fill:#050505!important}",
+ ".control-wrapper>label{margin:0!important;flex-shrink:0;width:1.95rem;height:1.95rem;border-radius:999px;background:#1C1C1E;display:flex!important;align-items:center;justify-content:center;cursor:pointer}",
+ ".control-wrapper>label>svg{fill:#d8d8d8!important;width:60%;height:60%}",".control-wrapper>label:hover>svg{fill:#E8650A!important}",
+ ".control-wrapper>input:checked+label{background:#E8650A}",".control-wrapper>input:checked+label>svg{fill:#050505!important}"].join("");
 let shown="";
 function link(udid){
- const base=PROXY ? `${location.origin}/scrcpy/${KEY}` : `http://${H}:${SP}/`;
+ const base=`${location.origin}/scrcpy/${KEY}`;  // always this page's own address, so the buttons can be restyled (SKIN)
  const ws=base.replace(/^http/,"ws")+`?action=proxy-adb&remote=tcp%3A8886&udid=${encodeURIComponent(udid)}`;
  return base+"#!"+new URLSearchParams({action:"stream",udid,player:"mse",ws,fitToScreen:"true"}).toString();}
 const player=d=>PROXY ? `/stream/${KEY}`+d.player.split("/").slice(3).join("/") : d.player;
@@ -300,7 +310,9 @@ function screen(b){
  // ws-scrcpy keeps the video size a shared stream started with and only refits on a resize; so start 2 px smaller
  // and grow to the final size once the stream is up, which makes it re-apply the bounds of this frame.
  f.width=W-2;f.height=Hh-2;f.allow="autoplay; fullscreen";
- f.addEventListener("load",()=>setTimeout(()=>{f.width=W;f.height=Hh;},STREAM?0:4000));
+ f.addEventListener("load",()=>{
+  if(!STREAM) try{f.contentDocument.head.insertAdjacentHTML("beforeend",`<style>${SKIN}</style>`);}catch(e){}
+  setTimeout(()=>{f.width=W;f.height=Hh;},STREAM?0:4000);});
  box.append(t,f);return box;}
 function render(rows,list){
  // Columns: the first row is the reference (height MINH). In the rows below, each screen takes the width of the screen
