@@ -280,10 +280,13 @@ const SKIN=[
  ".control-wrapper>label>svg{fill:#d8d8d8!important;width:60%;height:60%}",".control-wrapper>label:hover>svg{fill:#E8650A!important}",
  ".control-wrapper>input:checked+label{background:#E8650A}",".control-wrapper>input:checked+label>svg{fill:#050505!important}"].join("");
 let shown="";
+// iPhone Safari and its web views (the HA app) have no MediaSource, so ws-scrcpy's mse player never loads there:
+// use WebCodecs (iOS 16.4+), else the WASM decoder
+const PLAYER=window.MediaSource ? "mse" : typeof VideoDecoder==="function" ? "webcodecs" : "broadway";
 function link(udid){
  const base=`${location.origin}/scrcpy/${KEY}`;  // always this page's own address, so the buttons can be restyled (SKIN)
  const ws=base.replace(/^http/,"ws")+`?action=proxy-adb&remote=tcp%3A8886&udid=${encodeURIComponent(udid)}`;
- return base+"#!"+new URLSearchParams({action:"stream",udid,player:"mse",ws,fitToScreen:"true"}).toString();}
+ return base+"#!"+new URLSearchParams({action:"stream",udid,player:PLAYER,ws,fitToScreen:"true"}).toString();}
 const player=d=>PROXY ? `/stream/${KEY}`+d.player.split("/").slice(3).join("/") : d.player;
 function fit(){  // scale everything down (never up) so every screen fits the card without scrollbars
  const rows=document.getElementById("rows"); rows.style.transform="none";
