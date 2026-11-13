@@ -23,7 +23,7 @@ def test_ip_validation_blocks_anything_but_ipv4():
 @pytest.mark.skipif(not shutil.which("node"), reason="node not installed")
 def test_viewer_page_javascript_parses(tmp_path):
     js = control.VIEW.split("<script>")[1].split("</script>")[0]
-    js = js.replace("__VIEW_HEIGHT__", "410").replace("__SCRCPY_PORT__", "8001")
+    js = js.replace("__VIEW_HEIGHT__", "410").replace("__SCRCPY_PORT__", "8001").replace("__ACCENT__", "#E8650A")
     f = tmp_path / "view.js"
     f.write_text(js, encoding="utf8")
     assert subprocess.run(["node", "--check", str(f)]).returncode == 0

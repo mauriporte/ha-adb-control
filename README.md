@@ -120,6 +120,7 @@ The key sits in the dashboard's configuration, so anyone who can edit your dashb
 | `GET/POST /display` | show / hide per device |
 | `GET /view`, `GET /viewdata` | the viewer page and its data (no token) |
 | `GET /view?mode=stream` | the same viewer and layout with Stream Control's audio+video players (needs `stream_url`) |
+| `GET /view?accent=RRGGBB` | the device buttons' pressed/hover colour (the embedding page's accent); default `#E8650A`, or env `ADB_ACCENT` |
 
 ## Limits
 

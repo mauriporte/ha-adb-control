@@ -10,7 +10,7 @@
 #   GET  /display?ip=...       -> {"is_on": <screen shown in the viewer>}   POST /display {"ip", "show"} -> set it
 #                                 (hidden screens stay connected; they are only left out of the viewer)
 #   GET  /view?mode=stream     -> the same page with the audio+video streams instead (needs ADB_STREAM_URL)
-#   GET  /view                 -> page with the screens of all connected devices side by side (no token: LAN only,
+#   GET  /view[?accent=RRGGBB] -> page with the screens of all connected devices side by side (no token: LAN only,
 #                                 and ws-scrcpy itself on :8001 has no authentication either)
 # Every other request needs the X-Token header (env ADB_CONTROL_TOKEN).
 import json
@@ -32,6 +32,8 @@ TOKEN = os.environ["ADB_CONTROL_TOKEN"]
 SUBNET = os.environ.get("ADB_SCAN_SUBNET", "192.168.1.0/24")
 PORT = int(os.environ.get("ADB_CONTROL_PORT", "8002"))
 SCRCPY_PORT = int(os.environ.get("WS_SCRCPY_PORT", "8001"))
+# the viewer's accent (ws-scrcpy's pressed buttons) when the page that embeds it passes none (?accent=RRGGBB)
+ACCENT = (lambda a: a if re.fullmatch(r"#[0-9A-Fa-f]{6}", a) else "#E8650A")(os.environ.get("ADB_ACCENT", "#E8650A"))
 # optional audio+video streams (Stream Control, https://github.com/mauriporte/ha-stream-control): /view?mode=stream shows them with this same layout
 STREAM_FILE = "/root/.android/stream_url"  # or the env var; e.g. http://192.168.1.20:8005
 STREAM_URL = os.environ.get("ADB_STREAM_URL") or (open(STREAM_FILE).read().strip() if os.path.exists(STREAM_FILE) else "")
@@ -268,17 +270,19 @@ const VH=__VIEW_HEIGHT__,  // kept for the page template; sizes below use MINH
   H=location.hostname, SP=__SCRCPY_PORT__, STREAM=new URLSearchParams(location.search).get("mode")==="stream",
   PROXY=location.protocol==="https:",  // opened through the https tunnel: everything goes through this page's own address
   // the key goes into the frames' paths, so their relative files and WebSockets carry it too (no cookies needed)
-  KEY=(k=>k?encodeURIComponent(k)+"/":"")(new URLSearchParams(location.search).get("key"));
-// ws-scrcpy's device buttons in the A.R.T. look (round, near-black, orange when pressed), same as every A.R.T. app
+  KEY=(k=>k?encodeURIComponent(k)+"/":"")(new URLSearchParams(location.search).get("key")),
+  // the accent: ?accent=RRGGBB from the page that embeds this one (its own accent colour), else the default
+  ACC=(a=>/^[0-9a-f]{6}$/i.test(a||"")?"#"+a:"__ACCENT__")(new URLSearchParams(location.search).get("accent"));
+// ws-scrcpy's device buttons in the A.R.T. look (round, near-black, the accent when pressed), same as every A.R.T. app
 const SKIN=[
  "::-webkit-scrollbar{display:none}","html,body{overflow:hidden!important;background:#000}",
  ".control-buttons-list{overflow:hidden!important;justify-content:space-evenly;align-items:center;padding:.4rem 0;box-sizing:border-box;background:#000!important}",
  ".control-button{margin:0!important;flex-shrink:0;width:1.95rem!important;height:1.95rem!important;border-radius:999px;background:#1C1C1E!important;opacity:1!important;display:flex;align-items:center;justify-content:center}",
- ".control-button>svg{fill:#d8d8d8!important;width:60%;height:60%}",".control-button:hover>svg{fill:#E8650A!important}",
- ".control-button:active{background:#E8650A!important}",".control-button:active>svg{fill:#050505!important}",
+ ".control-button>svg{fill:#d8d8d8!important;width:60%;height:60%}",".control-button:hover>svg{fill:"+ACC+"!important}",
+ ".control-button:active{background:"+ACC+"!important}",".control-button:active>svg{fill:#050505!important}",
  ".control-wrapper>label{margin:0!important;flex-shrink:0;width:1.95rem;height:1.95rem;border-radius:999px;background:#1C1C1E;display:flex!important;align-items:center;justify-content:center;cursor:pointer}",
- ".control-wrapper>label>svg{fill:#d8d8d8!important;width:60%;height:60%}",".control-wrapper>label:hover>svg{fill:#E8650A!important}",
- ".control-wrapper>input:checked+label{background:#E8650A}",".control-wrapper>input:checked+label>svg{fill:#050505!important}"].join("");
+ ".control-wrapper>label>svg{fill:#d8d8d8!important;width:60%;height:60%}",".control-wrapper>label:hover>svg{fill:"+ACC+"!important}",
+ ".control-wrapper>input:checked+label{background:"+ACC+"}",".control-wrapper>input:checked+label>svg{fill:#050505!important}"].join("");
 let shown="";
 // iPhone Safari and its web views (the HA app) have no MediaSource, so ws-scrcpy's mse player never loads there:
 // use WebCodecs (iOS 16.4+), else the WASM decoder
@@ -469,7 +473,7 @@ class Handler(BaseHTTPRequestHandler):
         if not self._remote_ok() or self._proxy():
             return
         if urlparse(self.path).path == "/view":
-            page = VIEW.replace("__VIEW_HEIGHT__", str(VIEW_HEIGHT)).replace("__SCRCPY_PORT__", str(SCRCPY_PORT))
+            page = VIEW.replace("__VIEW_HEIGHT__", str(VIEW_HEIGHT)).replace("__SCRCPY_PORT__", str(SCRCPY_PORT)).replace("__ACCENT__", ACCENT)
             return self._reply(200, page, "text/html; charset=utf-8", self._send_key_cookie)
         if urlparse(self.path).path == "/viewdata":  # what the page needs: ip, state, model, aspect, landscape; the row layout
             layout = json.load(open(LAYOUT_FILE)) if os.path.exists(LAYOUT_FILE) else []
